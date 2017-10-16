@@ -13,29 +13,31 @@ func TestCodec(t *testing.T) {
 	version := uint(1)
 	var data, schemaData []byte
 	{
-		schema, err := NewSchema(S{}, nil)
+		schema, err := NewSchema(S{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		m, err := NewMarshaler(schema)
+		m, err := NewMarshaler(S{}, schema)
 		if err != nil {
 			t.Fatal(err)
 		}
-		sSchema := m.Schema()
-		schemaData = sSchema.Bytes()
-		sSchema.SetVersion(version)
+		schemaData = schema.Bytes()
+		schema.SetVersion(version)
 		data, err = m.Marshal(s)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	{
-		sSchema, err := NewSchema(&S{}, schemaData)
+		schema, err := NewSchema(schemaData)
 		if err != nil {
 			t.Fatal(err)
 		}
-		sSchema.SetVersion(version)
-		u, err := NewUnmarshaler(sSchema)
+		schema.SetVersion(version)
+		schemas := map[uint]*Schema{
+			version: schema,
+		}
+		u, err := NewUnmarshaler(&S{}, schemas)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,21 +58,24 @@ func TestTypeMismatchError(t *testing.T) {
 	type T2 struct{}
 	var t1Schema *Schema
 	{
-		schema, err := NewSchema(T1{}, nil)
+		var err error
+		t1Schema, err = NewSchema(T1{})
 		if err != nil {
 			t.Fatal(err)
 		}
-		m, err := NewMarshaler(schema)
+		m, err := NewMarshaler(T1{}, t1Schema)
 		if err != nil {
 			t.Fatal(err)
 		}
-		t1Schema = m.Schema()
 		if _, err := m.Marshal(T2{}); err == nil {
 			t.Fatal("expect type mismatch error")
 		}
 	}
 	{
-		u, err := NewUnmarshaler(t1Schema)
+		schemas := map[uint]*Schema{
+			1: t1Schema,
+		}
+		u, err := NewUnmarshaler(&T1{}, schemas)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -15,16 +15,16 @@ import (
 type (
 	Marshaler struct {
 		schema *Schema
+		typ    reflect.Type
 		enc    *encoder
 		mu     sync.Mutex
 	}
 	Unmarshaler struct {
-		schema *Schema
-		dec    *decoder
+		typ  reflect.Type
+		decs map[uint]*decoder
+		mu   sync.Mutex
 	}
 	Schema struct {
-		v    interface{}
-		typ  reflect.Type
 		data []byte
 		ver  uint
 	}
@@ -46,21 +46,22 @@ type (
 )
 
 // NewMarshaler creates a new Marshaler for type of v
-func NewMarshaler(schema *Schema) (*Marshaler, error) {
-	enc, err := schema.newEncoder()
+func NewMarshaler(v interface{}, schema *Schema) (*Marshaler, error) {
+	enc, err := newEncoder(v)
 	if err != nil {
 		return nil, err
 	}
 	return &Marshaler{
 		schema: schema,
 		enc:    enc,
+		typ:    getType(v),
 	}, nil
 }
 
 // Marshal marshals v into []byte and returns the result
 func (m *Marshaler) Marshal(v interface{}) ([]byte, error) {
-	if err := m.schema.check(v); err != nil {
-		return nil, err
+	if t := getType(v); t != m.typ {
+		return nil, fmt.Errorf("expect type %v but got %v", m.typ, t)
 	}
 	var buf bytes.Buffer
 	if _, err := m.schema.encodeVersion(&buf); err != nil {
@@ -76,55 +77,79 @@ func (m *Marshaler) Marshal(v interface{}) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func NewUnmarshaler(schema *Schema) (*Unmarshaler, error) {
-	dec, err := schema.newDecoder()
-	if err != nil {
-		return nil, err
+func NewUnmarshaler(v interface{}, schemas map[uint]*Schema) (*Unmarshaler, error) {
+	decs := make(map[uint]*decoder)
+	for ver, schema := range schemas {
+		dec, err := newDecoder(v, schema.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		decs[ver] = dec
 	}
 	return &Unmarshaler{
-		schema: schema,
-		dec:    dec,
+		typ:  getType(v),
+		decs: decs,
 	}, nil
 }
 
 func (u *Unmarshaler) Unmarshal(data []byte, v interface{}) error {
-	if err := u.schema.check(v); err != nil {
-		return err
+	if t := getType(v); t != u.typ {
+		return fmt.Errorf("expect type %v but got %v", u.typ, t)
 	}
 	r := bytes.NewReader(data)
 	ver, err := binary.ReadUvarint(r)
 	if err != nil {
 		return err
 	}
-	if uint64(u.schema.ver) != ver {
-		return errors.New("schema version mismatch")
+	dec, ok := u.decs[uint(ver)]
+	if !ok {
+		return errors.New("missing dec for the version")
 	}
-	u.dec.switchTo(r)
-	return u.dec.Decode(v)
+
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	dec.switchTo(r)
+	return dec.Decode(v)
 }
 
-func NewSchema(v interface{}, data []byte) (*Schema, error) {
-	var schemaBuf bytes.Buffer
-	sw := newSwitchWriter(&schemaBuf)
-	enc := gob.NewEncoder(sw)
-	if err := enc.Encode(v); err != nil {
+func NewSchema(value interface{}) (*Schema, error) {
+	switch v := value.(type) {
+	case []byte:
+		return &Schema{
+			data: v,
+		}, nil
+	}
+	data, err := encodeBytes(value)
+	if err != nil {
 		return nil, err
 	}
-	if data == nil {
-		data = schemaBuf.Bytes()
-	}
 	return &Schema{
-		v:    v,
-		typ:  getType(v),
 		data: data,
 	}, nil
 }
 
-func (s *Schema) newEncoder() (*encoder, error) {
+// SetVersion of the schema, a valid version should starts from 1
+func (s *Schema) SetVersion(version uint) {
+	s.ver = version
+}
+
+func (s *Schema) encodeVersion(w io.Writer) (int, error) {
+	if s.ver == 0 {
+		return 0, errors.New("schema version is not set")
+	}
+	buf := make([]byte, binary.MaxVarintLen64)
+	return w.Write(buf[:binary.PutUvarint(buf, uint64(s.ver))])
+}
+
+func (s *Schema) Bytes() []byte {
+	return s.data
+}
+
+func newEncoder(v interface{}) (*encoder, error) {
 	var schemaBuf bytes.Buffer
 	sw := newSwitchWriter(&schemaBuf)
 	enc := gob.NewEncoder(sw)
-	if err := enc.Encode(s.v); err != nil {
+	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
 	return &encoder{
@@ -133,10 +158,10 @@ func (s *Schema) newEncoder() (*encoder, error) {
 	}, nil
 }
 
-func (s *Schema) newDecoder() (*decoder, error) {
-	sr := newSwitchReader(bytes.NewReader(s.data))
+func newDecoder(v interface{}, schemaData []byte) (*decoder, error) {
+	sr := newSwitchReader(bytes.NewReader(schemaData))
 	dec := gob.NewDecoder(sr)
-	if err := dec.Decode(reflect.New(s.typ).Interface()); err != nil {
+	if err := dec.Decode(v); err != nil {
 		return nil, err
 	}
 	return &decoder{
@@ -144,29 +169,12 @@ func (s *Schema) newDecoder() (*decoder, error) {
 		Decoder:      dec,
 	}, nil
 }
-
-func (s *Schema) Bytes() []byte {
-	return s.data
-}
-
-// SetVersion of the schema, a valid version should starts from 1
-func (s *Schema) SetVersion(version uint) {
-	s.ver = version
-}
-
-func (s *Schema) check(v interface{}) error {
-	if s.ver == 0 {
-		return errors.New("schema version is not set")
+func encodeBytes(v interface{}) ([]byte, error) {
+	var schemaBuf bytes.Buffer
+	if err := gob.NewEncoder(&schemaBuf).Encode(v); err != nil {
+		return nil, err
 	}
-	if t := getType(v); t != s.typ {
-		return fmt.Errorf("expect type %v but got %v", s.typ, t)
-	}
-	return nil
-}
-
-func (s *Schema) encodeVersion(w io.Writer) (int, error) {
-	buf := make([]byte, binary.MaxVarintLen64)
-	return w.Write(buf[:binary.PutUvarint(buf, uint64(s.ver))])
+	return schemaBuf.Bytes(), nil
 }
 
 func getType(v interface{}) reflect.Type {
