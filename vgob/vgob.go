@@ -9,24 +9,33 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sync"
 )
 
 type (
 	Marshaler struct {
-		sw     *switchWriter
-		schema []byte
-		enc    *gob.Encoder
-		ver    gobVer
+		schema *Schema
+		enc    *encoder
+		mu     sync.Mutex
 	}
 	Unmarshaler struct {
-		sr     *switchReader
-		schema []byte
-		dec    *gob.Decoder
-		ver    gobVer
+		schema *Schema
+		dec    *decoder
 	}
-	gobVer struct {
-		typ reflect.Type
-		ver uint
+	Schema struct {
+		v    interface{}
+		typ  reflect.Type
+		data []byte
+		ver  uint
+	}
+
+	encoder struct {
+		*gob.Encoder
+		*switchWriter
+	}
+	decoder struct {
+		*switchReader
+		*gob.Decoder
 	}
 	switchWriter struct {
 		w io.Writer
@@ -37,66 +46,115 @@ type (
 )
 
 // NewMarshaler creates a new Marshaler for type of v
-func NewMarshaler(v interface{}) (*Marshaler, error) {
-	var schemaBuf bytes.Buffer
-	sw := newSwitchWriter(&schemaBuf)
-	enc := gob.NewEncoder(sw)
-	if err := enc.Encode(v); err != nil {
+func NewMarshaler(schema *Schema) (*Marshaler, error) {
+	enc, err := schema.newEncoder()
+	if err != nil {
 		return nil, err
 	}
 	return &Marshaler{
-		sw:     sw,
-		schema: schemaBuf.Bytes(),
+		schema: schema,
 		enc:    enc,
-		ver:    gobVer{typ: getType(v)},
 	}, nil
 }
 
 // Marshal marshals v into []byte and returns the result
 func (m *Marshaler) Marshal(v interface{}) ([]byte, error) {
-	if err := m.ver.check(v); err != nil {
+	if err := m.schema.check(v); err != nil {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	buf.Write(m.ver.bytes())
-	m.sw.switchTo(&buf)
+	if _, err := m.schema.encodeVersion(&buf); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.enc.switchTo(&buf)
 	if err := m.enc.Encode(v); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func (s *Marshaler) Schema() []byte {
-	return s.schema
-}
-
-func NewUnmarshaler(v interface{}, schema []byte, version uint) (*Unmarshaler, error) {
-	sr := newSwitchReader(bytes.NewReader(schema))
-	dec := gob.NewDecoder(sr)
-	if err := dec.Decode(v); err != nil {
+func NewUnmarshaler(schema *Schema) (*Unmarshaler, error) {
+	dec, err := schema.newDecoder()
+	if err != nil {
 		return nil, err
 	}
 	return &Unmarshaler{
-		sr:  sr,
-		dec: dec,
-		ver: gobVer{typ: getType(v), ver: version},
+		schema: schema,
+		dec:    dec,
 	}, nil
 }
 
 func (u *Unmarshaler) Unmarshal(data []byte, v interface{}) error {
-	if err := u.ver.check(v); err != nil {
+	if err := u.schema.check(v); err != nil {
 		return err
 	}
 	r := bytes.NewReader(data)
-	if _, err := binary.ReadUvarint(r); err != nil {
+	ver, err := binary.ReadUvarint(r)
+	if err != nil {
 		return err
 	}
-	// TODO: check read version
-	u.sr.switchTo(r)
+	if uint64(u.schema.ver) != ver {
+		return errors.New("schema version mismatch")
+	}
+	u.dec.switchTo(r)
 	return u.dec.Decode(v)
 }
 
-func (s *gobVer) check(v interface{}) error {
+func NewSchema(v interface{}, data []byte) (*Schema, error) {
+	var schemaBuf bytes.Buffer
+	sw := newSwitchWriter(&schemaBuf)
+	enc := gob.NewEncoder(sw)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	if data == nil {
+		data = schemaBuf.Bytes()
+	}
+	return &Schema{
+		v:    v,
+		typ:  getType(v),
+		data: data,
+	}, nil
+}
+
+func (s *Schema) newEncoder() (*encoder, error) {
+	var schemaBuf bytes.Buffer
+	sw := newSwitchWriter(&schemaBuf)
+	enc := gob.NewEncoder(sw)
+	if err := enc.Encode(s.v); err != nil {
+		return nil, err
+	}
+	return &encoder{
+		Encoder:      enc,
+		switchWriter: sw,
+	}, nil
+}
+
+func (s *Schema) newDecoder() (*decoder, error) {
+	sr := newSwitchReader(bytes.NewReader(s.data))
+	dec := gob.NewDecoder(sr)
+	if err := dec.Decode(reflect.New(s.typ).Interface()); err != nil {
+		return nil, err
+	}
+	return &decoder{
+		switchReader: sr,
+		Decoder:      dec,
+	}, nil
+}
+
+func (s *Schema) Bytes() []byte {
+	return s.data
+}
+
+// SetVersion of the schema, a valid version should starts from 1
+func (s *Schema) SetVersion(version uint) {
+	s.ver = version
+}
+
+func (s *Schema) check(v interface{}) error {
 	if s.ver == 0 {
 		return errors.New("schema version is not set")
 	}
@@ -106,14 +164,9 @@ func (s *gobVer) check(v interface{}) error {
 	return nil
 }
 
-func (s *gobVer) bytes() []byte {
+func (s *Schema) encodeVersion(w io.Writer) (int, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
-	return buf[:binary.PutUvarint(buf, uint64(s.ver))]
-}
-
-// SetVersion for the schema, a valid version should starts from 1
-func (s *Marshaler) SetVersion(version uint) {
-	s.ver.ver = version
+	return w.Write(buf[:binary.PutUvarint(buf, uint64(s.ver))])
 }
 
 func getType(v interface{}) reflect.Type {

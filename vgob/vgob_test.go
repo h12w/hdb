@@ -11,30 +11,42 @@ func TestCodec(t *testing.T) {
 	}
 	s := S{V: "a"}
 	version := uint(1)
-	var data, sSchema []byte
+	var data, schemaData []byte
 	{
-		m, err := NewMarshaler(S{})
+		schema, err := NewSchema(S{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		m.SetVersion(version)
-		sSchema = m.Schema()
+		m, err := NewMarshaler(schema)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sSchema := m.Schema()
+		schemaData = sSchema.Bytes()
+		sSchema.SetVersion(version)
 		data, err = m.Marshal(s)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	{
-		u, err := NewUnmarshaler(&S{}, sSchema, 1)
+		sSchema, err := NewSchema(&S{}, schemaData)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var res S
-		if err := u.Unmarshal(data, &res); err != nil {
+		sSchema.SetVersion(version)
+		u, err := NewUnmarshaler(sSchema)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(res, s) {
-			t.Fatalf("expect %v, got %v", s, res)
+		for i := 0; i < 3; i++ {
+			var res S
+			if err := u.Unmarshal(data, &res); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(res, s) {
+				t.Fatalf("expect %v, got %v", s, res)
+			}
 		}
 	}
 }
@@ -42,9 +54,13 @@ func TestCodec(t *testing.T) {
 func TestTypeMismatchError(t *testing.T) {
 	type T1 struct{}
 	type T2 struct{}
-	var t1Schema []byte
+	var t1Schema *Schema
 	{
-		m, err := NewMarshaler(T1{})
+		schema, err := NewSchema(T1{}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := NewMarshaler(schema)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +70,7 @@ func TestTypeMismatchError(t *testing.T) {
 		}
 	}
 	{
-		u, err := NewUnmarshaler(&T1{}, t1Schema, 1)
+		u, err := NewUnmarshaler(t1Schema)
 		if err != nil {
 			t.Fatal(err)
 		}
