@@ -46,16 +46,28 @@ type (
 )
 
 // NewMarshaler creates a new Marshaler for type of v
-func NewMarshaler(v interface{}, schema *Schema) (*Marshaler, error) {
+func NewMarshaler(v interface{}) (*Marshaler, error) {
 	enc, err := newEncoder(v)
 	if err != nil {
 		return nil, err
 	}
+	schemaData, err := encodeBytes(v)
+	if err != nil {
+		return nil, err
+	}
 	return &Marshaler{
-		schema: schema,
+		schema: NewSchema(schemaData, 0),
 		enc:    enc,
 		typ:    getType(v),
 	}, nil
+}
+
+func (m *Marshaler) SetVersion(version uint) {
+	m.schema.setVersion(version)
+}
+
+func (m *Marshaler) Schema() *Schema {
+	return m.schema
 }
 
 // Marshal marshals v into []byte and returns the result
@@ -112,24 +124,15 @@ func (u *Unmarshaler) Unmarshal(data []byte, v interface{}) error {
 	return dec.Decode(v)
 }
 
-func NewSchema(value interface{}) (*Schema, error) {
-	switch v := value.(type) {
-	case []byte:
-		return &Schema{
-			data: v,
-		}, nil
-	}
-	data, err := encodeBytes(value)
-	if err != nil {
-		return nil, err
-	}
+func NewSchema(data []byte, version uint) *Schema {
 	return &Schema{
 		data: data,
-	}, nil
+		ver:  version,
+	}
 }
 
 // SetVersion of the schema, a valid version should starts from 1
-func (s *Schema) SetVersion(version uint) {
+func (s *Schema) setVersion(version uint) {
 	s.ver = version
 }
 
