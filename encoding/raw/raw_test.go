@@ -51,3 +51,43 @@ func TestReg(t *testing.T) {
 		}
 	}
 }
+
+func TestAddRemove(t *testing.T) {
+	type s0 struct {
+		A int
+	}
+	type s1 struct {
+		A int
+		B int
+	}
+	// test add a field
+	{
+		data, err := Marshal(s0{A: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res s0
+		if err := Unmarshal(data, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.A != 1 {
+			t.Fatalf("expect 1 but got %d", res.A)
+		}
+	}
+	// test remove a field from the bottom
+	// remove a field from the middle is be supported
+	// if a field is unused, leave it to its default value
+	{
+		data, err := Marshal(s1{A: 1, B: 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res s1
+		if err := Unmarshal(data, &res); err != nil {
+			t.Fatal(err)
+		}
+		if res.A != 1 {
+			t.Fatalf("expect 1 but got %d", res.A)
+		}
+	}
+}

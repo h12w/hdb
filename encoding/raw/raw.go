@@ -16,7 +16,11 @@ func Marshal(v interface{}) ([]byte, error) {
 }
 
 func Unmarshal(b []byte, v interface{}) error {
-	return NewDecoder(bytes.NewReader(b)).Decode(v)
+	err := NewDecoder(bytes.NewReader(b)).Decode(v)
+	if err == io.EOF {
+		return nil
+	}
+	return err
 }
 
 func NewEncoder(w io.Writer) *binary.Encoder {
