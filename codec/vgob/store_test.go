@@ -22,7 +22,7 @@ func TestAddField(t *testing.T) {
 		if err := schemaStore.RegisterName("S", S{}); err != nil {
 			t.Fatal(err)
 		}
-		m, err := schemaStore.NewMarshaler("S")
+		m, err := schemaStore.NewTypeMarshaler("S")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -46,7 +46,7 @@ func TestAddField(t *testing.T) {
 		if err := schemaStore.RegisterName("S", S{}); err != nil {
 			t.Fatal(err)
 		}
-		u, err := schemaStore.NewUnmarshaler("S")
+		u, err := schemaStore.NewTypeUnmarshaler("S")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,7 +79,7 @@ func TestRemoveField(t *testing.T) {
 		if err := schemaStore.RegisterName("S", S{}); err != nil {
 			t.Fatal(err)
 		}
-		m, err := schemaStore.NewMarshaler("S")
+		m, err := schemaStore.NewTypeMarshaler("S")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +102,7 @@ func TestRemoveField(t *testing.T) {
 		if err := schemaStore.RegisterName("S", S{}); err != nil {
 			t.Fatal(err)
 		}
-		u, err := schemaStore.NewUnmarshaler("S")
+		u, err := schemaStore.NewTypeUnmarshaler("S")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,7 +134,7 @@ func TestRenameType(t *testing.T) {
 		if err := schemaStore.RegisterName("S", S{}); err != nil {
 			t.Fatal(err)
 		}
-		m, err := schemaStore.NewMarshaler("S")
+		m, err := schemaStore.NewTypeMarshaler("S")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -157,7 +157,7 @@ func TestRenameType(t *testing.T) {
 		if err := schemaStore.RegisterName("S", T{}); err != nil {
 			t.Fatal(err)
 		}
-		u, err := schemaStore.NewUnmarshaler("S")
+		u, err := schemaStore.NewTypeUnmarshaler("S")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +191,7 @@ func TestTypeMismatchError(t *testing.T) {
 
 	{
 		var err error
-		m, err := schemaStore.NewMarshaler("T1")
+		m, err := schemaStore.NewTypeMarshaler("T1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -200,7 +200,7 @@ func TestTypeMismatchError(t *testing.T) {
 		}
 	}
 	{
-		u, err := schemaStore.NewUnmarshaler("T1")
+		u, err := schemaStore.NewTypeUnmarshaler("T1")
 		if err != nil {
 			t.Fatal(err)
 		}

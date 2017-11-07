@@ -2,10 +2,7 @@
 package vgob
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -15,13 +12,6 @@ type (
 	SchemaStore struct {
 		schemas schemas
 		file    string
-	}
-	Marshaler struct {
-		ver uint
-		enc *encoder
-	}
-	Unmarshaler struct {
-		decs map[uint]*decoder
 	}
 )
 
@@ -88,8 +78,33 @@ func (s *SchemaStore) Save() error {
 	return os.Rename(tmpfile, s.file)
 }
 
-// NewMarshaler creates a new Marshaler for type of v
-func (s *SchemaStore) NewMarshaler(name string) (*Marshaler, error) {
+func (s *SchemaStore) NewMarshaler() (*Marshaler, error) {
+	ms := make(map[reflect.Type]*TypeMarshaler)
+	for name, schema := range s.schemas {
+		marshaler, err := s.NewTypeMarshaler(name)
+		if err != nil {
+			return nil, err
+		}
+		ms[schema.typ] = marshaler
+	}
+	return &Marshaler{ms: ms}, nil
+}
+
+func (s *SchemaStore) NewUnmarshaler() (*Unmarshaler, error) {
+	us := make(map[reflect.Type]*TypeUnmarshaler)
+	for name, schema := range s.schemas {
+		unmarshaler, err := s.NewTypeUnmarshaler(name)
+		if err != nil {
+			return nil, err
+		}
+		us[schema.typ] = unmarshaler
+	}
+	return &Unmarshaler{us: us}, nil
+
+}
+
+// NewTypeMarshaler creates a new Marshaler for type of v
+func (s *SchemaStore) NewTypeMarshaler(name string) (*TypeMarshaler, error) {
 	schema, ok := s.schemas[name]
 	if !ok {
 		return nil, fmt.Errorf("schema for %s is not registered", name)
@@ -102,13 +117,14 @@ func (s *SchemaStore) NewMarshaler(name string) (*Marshaler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Marshaler{
+	return &TypeMarshaler{
 		enc: enc,
 		ver: uint(len(schema.Versions)),
 	}, nil
 }
 
-func (s *SchemaStore) NewUnmarshaler(name string) (*Unmarshaler, error) {
+// NewTypeUnmarshaler creates a new Unmarshaler for type of v
+func (s *SchemaStore) NewTypeUnmarshaler(name string) (*TypeUnmarshaler, error) {
 	schema, ok := s.schemas[name]
 	if !ok {
 		return nil, fmt.Errorf("schema for %s is not registered", name)
@@ -125,32 +141,7 @@ func (s *SchemaStore) NewUnmarshaler(name string) (*Unmarshaler, error) {
 		}
 		decs[version] = dec
 	}
-	return &Unmarshaler{
+	return &TypeUnmarshaler{
 		decs: decs,
 	}, nil
-}
-
-// Marshal marshals v into []byte and returns the result
-func (m *Marshaler) Marshal(v interface{}) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := encodeVersion(&buf, m.ver); err != nil {
-		return nil, err
-	}
-	if err := m.enc.encode(&buf, v); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func (u *Unmarshaler) Unmarshal(data []byte, v interface{}) error {
-	r := bytes.NewReader(data)
-	ver, err := binary.ReadUvarint(r)
-	if err != nil {
-		return err
-	}
-	dec, ok := u.decs[uint(ver)]
-	if !ok {
-		return errors.New("missing dec for the version")
-	}
-	return dec.decode(r, v)
 }
