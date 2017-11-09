@@ -121,6 +121,16 @@ func encodeVersion(w io.Writer, version uint) (int, error) {
 	buf := make([]byte, binary.MaxVarintLen64)
 	return w.Write(buf[:binary.PutUvarint(buf, uint64(version))])
 }
+func decodeVersion(r io.ByteReader) (uint, error) {
+	version, err := binary.ReadUvarint(r)
+	if err != nil {
+		return 0, err
+	}
+	if version == 0 {
+		return 0, errors.New("version should not be zero")
+	}
+	return uint(version), nil
+}
 
 func encodeSchema(t reflect.Type) ([]byte, error) {
 	var schemaBuf bytes.Buffer

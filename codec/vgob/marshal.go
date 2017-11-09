@@ -2,7 +2,6 @@ package vgob
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"reflect"
 )
@@ -55,7 +54,7 @@ func (m *TypeMarshaler) Marshal(v interface{}) ([]byte, error) {
 
 func (u *TypeUnmarshaler) Unmarshal(data []byte, v interface{}) error {
 	r := bytes.NewReader(data)
-	ver, err := binary.ReadUvarint(r)
+	ver, err := decodeVersion(r)
 	if err != nil {
 		return err
 	}
