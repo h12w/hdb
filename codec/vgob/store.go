@@ -100,7 +100,6 @@ func (s *SchemaStore) NewUnmarshaler() (*Unmarshaler, error) {
 		us[schema.typ] = unmarshaler
 	}
 	return &Unmarshaler{us: us}, nil
-
 }
 
 // NewTypeMarshaler creates a new Marshaler for type of v

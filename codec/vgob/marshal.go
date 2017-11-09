@@ -3,7 +3,6 @@ package vgob
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"reflect"
 )
@@ -62,7 +61,7 @@ func (u *TypeUnmarshaler) Unmarshal(data []byte, v interface{}) error {
 	}
 	dec, ok := u.decs[uint(ver)]
 	if !ok {
-		return errors.New("missing dec for the version")
+		return fmt.Errorf("missing decoder for type %v, version %d", reflect.TypeOf(v), ver)
 	}
 	return dec.decode(r, v)
 }
