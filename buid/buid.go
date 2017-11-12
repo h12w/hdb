@@ -51,11 +51,15 @@ import (
 	"time"
 )
 
-// ID is BUID
 type (
-	ID   [16]byte
-	Node struct {
-		process uint16
+	// ID is BUID
+	ID    [16]byte
+	Shard [8]byte
+	Key   [8]byte
+
+	// Process represents a unique process on a specific node
+	Process struct {
+		id      uint16
 		counter uint16
 		t       time.Time
 		mu      sync.Mutex
@@ -65,10 +69,11 @@ type (
 // Epoch is the bespoke epoch of BUID
 var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC)
 
-func NewNode(process uint16) *Node {
-	return &Node{
-		process: process,
-		t:       time.Now().UTC(),
+// NewProcess returns a new Process object for id
+func NewProcess(id uint16) *Process {
+	return &Process{
+		id: id,
+		t:  time.Now(),
 	}
 }
 
@@ -76,7 +81,7 @@ func NewNode(process uint16) *Node {
 
 // NewID generates a new BUID on the node from a timestamp and a shard
 // the timestamp
-func (n *Node) NewID(shard uint16) ID {
+func (n *Process) NewID(shard uint16) ID {
 	t := time.Now()
 
 	n.mu.Lock()
@@ -104,7 +109,7 @@ func (n *Node) NewID(shard uint16) ID {
 	second := uint8(t.Second())
 	micro := uint32(t.Nanosecond() / 1000)
 	hour := uint32(t.Sub(Epoch).Hours())
-	process := n.process
+	process := n.id
 	// END TODO
 
 	return ID{
@@ -117,4 +122,13 @@ func (n *Node) NewID(shard uint16) ID {
 		byte(process >> 8), byte(process),
 		byte(counter >> 8), byte(counter),
 	}
+}
+
+// Split splits BUID to Shard and Key
+func (id *ID) Split() (Shard, Key) {
+	var shard Shard
+	var key Key
+	copy(shard[:], (*id)[:8])
+	copy(key[:], (*id)[8:])
+	return shard, key
 }

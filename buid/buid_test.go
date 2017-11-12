@@ -3,7 +3,7 @@ package buid
 import "testing"
 
 func BenchmarkNewID(b *testing.B) {
-	node := NewNode(1)
+	node := NewProcess(1)
 
 	b.ReportAllocs()
 	b.ResetTimer()
