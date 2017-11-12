@@ -60,7 +60,6 @@ type (
 	Process struct {
 		id      uint16
 		counter uint16
-		full    bool
 		t       time.Time
 		mu      sync.Mutex
 	}
@@ -87,7 +86,7 @@ func (n *Process) NewID(shard uint16, ts time.Time) ID {
 		n.t = ts
 		n.counter = 0
 	} else { // if ts == n.t || ts < n.t (same time or the clock is rewinded)
-		if n.full {
+		if n.counter == 0 { // is full
 			for {
 				now := time.Now()
 				if now.After(n.t) {
@@ -98,7 +97,6 @@ func (n *Process) NewID(shard uint16, ts time.Time) ID {
 		}
 		counter = n.counter
 		n.counter++
-		n.full = (n.counter == 0)
 	}
 	t := n.t
 	n.mu.Unlock()
