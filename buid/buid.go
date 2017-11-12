@@ -1,31 +1,120 @@
-// Package buid provides Bipartite Unique Identifier
-package buid
-
 /*
-ID is Bipartite Unique Identifier
+Package buid provides Bipartite Unique Identifier (BUID)
 
-buid  = shard key .
+A BUID is a 128-bit unique ID composed of two 64-bit parts: shard and key.
+
+It is not only a unique ID, but also contains the sharding information, so that
+the messages with the same BUID could be stored together within the same DB shard.
+
+Also, when a message is stored in a shard, the shard part of the BUID can be
+trimmed off to save the space, and only the key part needs to be stored as the
+primary key.
+
+Bigendian is chosen to make each part byte-wise lexicographic sortable.
+
+BUID = shard key .
 
 shard:
 
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    0             1               2               3
+    7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
    |           shard-index         |            reserved           |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                   hours from bespoke epoch                    |
+   |                  hours (from bespoke epoch)                   |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 key:
 
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    0             1               2               3
+    7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |                 an hour time in microseconds                  |
+   |  minutes  |  seconds  |            microseconds               |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  machine/service/blue-green   |            counter            |
+   |            process            |            counter            |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
+- shard-index (uint16): the index of the shard for storing the data associated to the BUID
+- hours (uint32): hours from bespoke epoch time
+- minutes (uint6): 0-59 minutes within an hour
+- seconds (uint6): 0-59 seconds within a minute
+- microseconds (uint16): 0-999999 microseconds within a second
+- process (uint16): a unique process on a specific node
+- counter (uint16): cyclic counter for within each microsecond
+
 */
-type ID struct {
+package buid
+
+import (
+	"math"
+	"sync"
+	"time"
+)
+
+// ID is BUID
+type (
+	ID   [16]byte
+	Node struct {
+		process uint16
+		counter uint16
+		t       time.Time
+		mu      sync.Mutex
+	}
+)
+
+// Epoch is the bespoke epoch of BUID
+var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC)
+
+func NewNode(process uint16) *Node {
+	return &Node{
+		process: process,
+		t:       time.Now().UTC(),
+	}
+}
+
+// the generator needs a microsecond to be initialized to avoid conflict caused by restarting within an microsecond
+
+// NewID generates a new BUID on the node from a timestamp and a shard
+// the timestamp
+func (n *Node) NewID(shard uint16) ID {
+	t := time.Now()
+
+	n.mu.Lock()
+	counter := n.counter
+	for {
+		if t.After(n.t) {
+			n.counter = 0
+			n.t = t
+			counter = 0
+		} else {
+			// if t == n.t, inc counter
+			// if t < n.t, clock is rewinded, should not update t
+			if n.counter == math.MaxUint16 {
+				t = time.Now()
+				continue // wait until the next microsecond slot
+			}
+			n.counter++
+		}
+		break
+	}
+	n.mu.Unlock()
+
+	// TODO: optimize with customized code
+	minute := uint8(t.Minute())
+	second := uint8(t.Second())
+	micro := uint32(t.Nanosecond() / 1000)
+	hour := uint32(t.Sub(Epoch).Hours())
+	process := n.process
+	// END TODO
+
+	return ID{
+		byte(shard >> 8), byte(shard),
+		0, 0, // reserved
+		byte(hour >> 24), byte(hour >> 16), byte(hour >> 8), byte(hour),
+		((minute & 0x3f) << 2) | ((second & 0x30) >> 4),
+		((second & 0x0f) << 4) | byte(micro>>16),
+		byte(micro >> 8), byte(micro),
+		byte(process >> 8), byte(process),
+		byte(counter >> 8), byte(counter),
+	}
 }
