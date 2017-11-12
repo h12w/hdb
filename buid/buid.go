@@ -46,7 +46,6 @@ key:
 package buid
 
 import (
-	"math"
 	"sync"
 	"time"
 )
@@ -61,6 +60,7 @@ type (
 	Process struct {
 		id      uint16
 		counter uint16
+		full    bool
 		t       time.Time
 		mu      sync.Mutex
 	}
@@ -79,32 +79,31 @@ func NewProcess(id uint16) *Process {
 
 // the generator needs a microsecond to be initialized to avoid conflict caused by restarting within an microsecond
 
-// NewID generates a new BUID on the node from a timestamp and a shard
-// the timestamp
-func (n *Process) NewID(shard uint16) ID {
-	t := time.Now()
-
+// NewID generates a new BUID from a shard index and a timestamp
+func (n *Process) NewID(shard uint16, ts time.Time) ID {
+	counter := uint16(0)
 	n.mu.Lock()
-	counter := n.counter
-	for {
-		if t.After(n.t) {
-			n.counter = 0
-			n.t = t
-			counter = 0
-		} else {
-			// if t == n.t, inc counter
-			// if t < n.t, clock is rewinded, should not update t
-			if n.counter == math.MaxUint16 {
-				t = time.Now()
-				continue // wait until the next microsecond slot
+	if ts.After(n.t) {
+		n.t = ts
+		n.counter = 0
+	} else { // if ts == n.t || ts < n.t (same time or the clock is rewinded)
+		if n.full {
+			for {
+				now := time.Now()
+				if now.After(n.t) {
+					n.t = now
+					break
+				}
 			}
-			n.counter++
 		}
-		break
+		counter = n.counter
+		n.counter++
+		n.full = (n.counter == 0)
 	}
+	t := n.t
 	n.mu.Unlock()
 
-	// TODO: optimize with customized code
+	// TODO: can be optimize with customized code
 	minute := uint8(t.Minute())
 	second := uint8(t.Second())
 	micro := uint32(t.Nanosecond() / 1000)
