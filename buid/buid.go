@@ -35,7 +35,7 @@ key:
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 - shard-index (uint16): the index of the shard for storing the data associated to the BUID
-- hours (uint32): hours from bespoke epoch time
+- hours (uint32): hours from bespoke epoch time (490,293 years after epoch, should be enough :-)
 - minutes (uint6): 0-59 minutes within an hour
 - seconds (uint6): 0-59 seconds within a minute
 - microseconds (uint16): 0-999999 microseconds within a second
@@ -46,68 +46,84 @@ key:
 package buid
 
 import (
+	"math"
 	"sync"
 	"time"
 )
 
 type (
 	// ID is BUID
-	ID    [16]byte
+	ID [16]byte
+	// Shard part of the BUID
 	Shard [8]byte
-	Key   [8]byte
+	// Key part of the BUID
+	Key [8]byte
 
 	// Process represents a unique process on a specific node
 	Process struct {
 		id      uint16
-		counter uint16
-		t       time.Time
+		counter uint32
+		t       int64
 		mu      sync.Mutex
 	}
 )
 
-// Epoch is the bespoke epoch of BUID
-var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC)
+const (
+	secondInMicroseconds = 1000000
+	minuteInMicroseconds = 60 * 1000000
+	hourInMicroseconds   = 60 * 60 * 1000000
+)
+
+// Epoch is the bespoke epoch of BUID in Unix Epoch in microseconds
+var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC).UnixNano() / 1000
+
+// internalTime returns internal epoch time in microseconds
+func internalTime(t time.Time) int64 {
+	return t.UnixNano()/1000 - Epoch
+}
 
 // NewProcess returns a new Process object for id
 func NewProcess(id uint16) *Process {
 	return &Process{
 		id: id,
-		t:  time.Now(),
+		t:  time.Now().UnixNano()/1000 - Epoch,
 	}
 }
 
 // the generator needs a microsecond to be initialized to avoid conflict caused by restarting within an microsecond
 
 // NewID generates a new BUID from a shard index and a timestamp
-func (n *Process) NewID(shard uint16, ts time.Time) ID {
+func (p *Process) NewID(shard uint16, timestamp time.Time) ID {
+	ts := internalTime(timestamp)
 	counter := uint16(0)
-	n.mu.Lock()
-	if ts.After(n.t) {
-		n.t = ts
-		n.counter = 0
+	p.mu.Lock()
+	if ts > p.t {
+		p.t = ts
+		p.counter = 0
 	} else { // if ts == n.t || ts < n.t (same time or the clock is rewinded)
-		if n.counter == 0 { // is full
+		if p.counter > math.MaxUint16 { // is full
 			for {
-				now := time.Now()
-				if now.After(n.t) {
-					n.t = now
+				now := internalTime(time.Now())
+				if now > p.t {
+					p.t = now
+					p.counter = 0
 					break
 				}
 			}
 		}
-		counter = n.counter
-		n.counter++
+		counter = uint16(p.counter)
+		p.counter++
 	}
-	t := n.t
-	n.mu.Unlock()
+	t := p.t
+	p.mu.Unlock()
 
-	// TODO: can be optimize with customized code
-	minute := uint8(t.Minute())
-	second := uint8(t.Second())
-	micro := uint32(t.Nanosecond() / 1000)
-	hour := uint32(t.Sub(Epoch).Hours())
-	process := n.id
-	// END TODO
+	var (
+		hour    = uint32(t / hourInMicroseconds)
+		minute  = uint8((t % hourInMicroseconds) / minuteInMicroseconds)
+		second  = uint8((t % minuteInMicroseconds) / secondInMicroseconds)
+		micro   = uint32(t % secondInMicroseconds)
+		process = p.id
+	)
 
 	return ID{
 		byte(shard >> 8), byte(shard),
@@ -122,10 +138,31 @@ func (n *Process) NewID(shard uint16, ts time.Time) ID {
 }
 
 // Split splits BUID to Shard and Key
-func (id *ID) Split() (Shard, Key) {
+func (id ID) Split() (Shard, Key) {
 	var shard Shard
 	var key Key
-	copy(shard[:], (*id)[:8])
-	copy(key[:], (*id)[8:])
+	copy(shard[:], id[:8])
+	copy(key[:], id[8:])
 	return shard, key
+}
+
+// Time returns the embedded timestamp
+func (id ID) Time() time.Time {
+	var (
+		hour = (uint32(id[4]) << 24) |
+			(uint32(id[5]) << 16) |
+			(uint32(id[6]) << 8) |
+			uint32(id[7])
+		minute = (id[8] & 0xfc) >> 2
+		second = ((id[8] & 0x03) << 4) | (id[9] >> 4)
+		micro  = (uint32(id[9]&0x0f) << 16) |
+			(uint32(id[10]) << 8) |
+			uint32(id[11])
+		t = Epoch +
+			int64(hour)*hourInMicroseconds +
+			int64(minute)*minuteInMicroseconds +
+			int64(second)*secondInMicroseconds +
+			int64(micro)
+	)
+	return time.Unix(0, t*1000).UTC()
 }
