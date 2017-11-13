@@ -84,13 +84,22 @@ func internalTime(t time.Time) int64 {
 
 // NewProcess returns a new Process object for id
 func NewProcess(id uint16) *Process {
+	// the generator needs to wait a microsecond to avoid
+	// possible conflict caused by restarting within a microsecond
+	t := time.Now()
+	for {
+		now := time.Now()
+		if now.Sub(t) > time.Microsecond {
+			t = now
+			break
+		}
+	}
+
 	return &Process{
 		id: id,
-		t:  time.Now().UnixNano()/1000 - Epoch,
+		t:  internalTime(t),
 	}
 }
-
-// the generator needs a microsecond to be initialized to avoid conflict caused by restarting within an microsecond
 
 // NewID generates a new BUID from a shard index and a timestamp
 func (p *Process) NewID(shard uint16, timestamp time.Time) ID {
