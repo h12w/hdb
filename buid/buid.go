@@ -81,6 +81,9 @@ var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC).UnixNano() / 1000
 func internalTime(t time.Time) int64 {
 	return t.UnixNano()/1000 - Epoch
 }
+func externalTime(t int64) time.Time {
+	return time.Unix(0, (Epoch+t)*1000).UTC()
+}
 
 // NewProcess returns a new Process object for id
 func NewProcess(id uint16) *Process {
@@ -146,15 +149,6 @@ func (p *Process) NewID(shard uint16, timestamp time.Time) ID {
 	}
 }
 
-// Split splits BUID to Shard and Key
-func (id ID) Split() (Shard, Key) {
-	var shard Shard
-	var key Key
-	copy(shard[:], id[:8])
-	copy(key[:], id[8:])
-	return shard, key
-}
-
 // Time returns the embedded timestamp
 func (id ID) Time() time.Time {
 	var (
@@ -167,11 +161,56 @@ func (id ID) Time() time.Time {
 		micro  = (uint32(id[9]&0x0f) << 16) |
 			(uint32(id[10]) << 8) |
 			uint32(id[11])
-		t = Epoch +
-			int64(hour)*hourInMicroseconds +
+		t = int64(hour)*hourInMicroseconds +
 			int64(minute)*minuteInMicroseconds +
 			int64(second)*secondInMicroseconds +
 			int64(micro)
 	)
-	return time.Unix(0, t*1000).UTC()
+	return externalTime(t)
+}
+
+// Split splits BUID to Shard and Key
+func (id ID) Split() (Shard, Key) {
+	var shard Shard
+	var key Key
+	copy(shard[:], id[:8])
+	copy(key[:], id[8:])
+	return shard, key
+}
+
+// Index returns the embedded shard index
+func (s Shard) Index() uint16 {
+	return (uint16(s[0]) << 8) | uint16(s[1])
+}
+
+// Time returns the embedded hours in time.Time
+func (s Shard) Time() time.Time {
+	hour := (uint32(s[4]) << 24) |
+		(uint32(s[5]) << 16) |
+		(uint32(s[6]) << 8) |
+		uint32(s[7])
+	t := int64(hour) * hourInMicroseconds
+	return externalTime(t)
+}
+
+// Time returns the embedded time in time.Duration
+func (k Key) Time() time.Duration {
+	minute := (k[0] & 0xfc) >> 2
+	second := ((k[0] & 0x03) << 4) | (k[1] >> 4)
+	micro := (uint32(k[1]&0x0f) << 16) |
+		(uint32(k[2]) << 8) |
+		uint32(k[3])
+	return (time.Duration(minute)*minuteInMicroseconds +
+		time.Duration(second)*secondInMicroseconds +
+		time.Duration(micro)) * 1000
+}
+
+// Process returns the embedded process ID
+func (k Key) Process() uint16 {
+	return (uint16(k[4]) << 8) | uint16(k[5])
+}
+
+// Counter returns the embedded counter part of the key
+func (k Key) Counter() uint16 {
+	return (uint16(k[6]) << 8) | uint16(k[7])
 }
