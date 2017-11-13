@@ -34,13 +34,17 @@ key:
    |            process            |            counter            |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-- shard-index (uint16): the index of the shard for storing the data associated to the BUID
-- hours (uint32): hours from bespoke epoch time (490,293 years after epoch, should be enough :-)
-- minutes (uint6): 0-59 minutes within an hour
-- seconds (uint6): 0-59 seconds within a minute
-- microseconds (uint16): 0-999999 microseconds within a second
-- process (uint16): a unique process on a specific node
-- counter (uint16): cyclic counter for within each microsecond
+Definitions:
+
+   | item         | type   | description                                                        |
+   |--------------|--------|--------------------------------------------------------------------|
+   | shard-index  | uint16 | the index of the shard for storing the data associated to the BUID |
+   | hours        | uint32 | hours from bespoke epoch (490,293 years, should be enough :-)      |
+   | minutes      | uint6  | 0-59 minutes within an hour                                        |
+   | seconds      | uint6  | 0-59 seconds within a minute                                       |
+   | microseconds | uint16 | 0-999999 microseconds within a second                              |
+   | process      | uint16 | a unique process on a specific node                                |
+   | counter      | uint16 | cyclic counter for within each microsecond                         |
 
 */
 package buid
