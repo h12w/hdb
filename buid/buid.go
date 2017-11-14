@@ -115,7 +115,7 @@ func (p *Process) NewID(shard uint16, timestamp time.Time) ID {
 	p.mu.Lock()
 	if ts > p.t {
 		p.t = ts
-		p.counter = 0
+		p.counter = 1
 	} else { // if ts == n.t || ts < n.t (same time or the clock is rewinded)
 		if p.counter > math.MaxUint16 { // is full
 			for {

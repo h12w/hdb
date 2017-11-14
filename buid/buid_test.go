@@ -1,6 +1,7 @@
 package buid
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -53,28 +54,30 @@ func TestCounterOverflow(t *testing.T) {
 	process := NewProcess(1)
 	ts := time.Now().UTC().Truncate(time.Microsecond)
 
-	// reset process ts
-	{
-		processTs := externalTime(process.t)
-		for processTs.Equal(ts) {
-			id = process.NewID(2, ts)
-			processTs = externalTime(process.t)
+	for i := 0; i <= 65535; i++ {
+		id = process.NewID(2, ts)
+		_, key := id.Split()
+		if int(key.Counter()) != i {
+			t.Fatalf("expect counter %d got %d", i, key.Counter())
+		}
+		if !ts.Equal(id.Time()) {
+			t.Fatalf("expect time %v got %v", ts, id.Time())
 		}
 	}
 
-	for i := 0; i < 65536; i++ {
-		id = process.NewID(2, ts)
+	// get the first ID based on the overflowed counter
+	id = process.NewID(2, ts)
+	_, key := id.Split()
+	if key.Counter() != 0 {
+		t.Fatalf("expect 0 got %d", key.Counter())
 	}
+
 	expectedTs := externalTime(process.t)
 	if !expectedTs.After(ts) {
 		t.Fatal("expect the ts proceed")
 	}
 	if extractedTs := id.Time(); !extractedTs.Equal(expectedTs) {
 		t.Fatalf("expect %v got %v", ts, extractedTs)
-	}
-	_, key := id.Split()
-	if key.Counter() != 0 {
-		t.Fatalf("expect 0 got %d", key.Counter())
 	}
 }
 
@@ -132,7 +135,7 @@ func TestKeyProcess(t *testing.T) {
 	}
 }
 
-func TestKeyCounter(t *testing.T) {
+func TestKeyCounterInc(t *testing.T) {
 	ts := time.Now().UTC().Truncate(time.Microsecond)
 	process := NewProcess(12)
 	var id ID
@@ -143,4 +146,31 @@ func TestKeyCounter(t *testing.T) {
 	if key.Counter() != 22 {
 		t.Fatalf("expect 22 got %v", key.Counter())
 	}
+}
+
+func TestUniqueness(t *testing.T) {
+	m := make(map[ID]bool)
+	process := NewProcess(12)
+	for i := 0; i < 1000000; i++ {
+		id := process.NewID(1, time.Now())
+		if m[id] {
+			t.Fatal(i, "duplicates detected")
+		}
+		m[id] = true
+	}
+}
+
+func BenchmarkMaxCounter(b *testing.B) {
+	process := NewProcess(12)
+	b.RunParallel(func(pb *testing.PB) {
+		c := uint16(0)
+		for pb.Next() {
+			id := process.NewID(1, time.Now())
+			_, key := id.Split()
+			if key.Counter() > c {
+				c = key.Counter()
+			}
+		}
+		fmt.Println(c)
+	})
 }
