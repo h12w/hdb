@@ -1,14 +1,16 @@
 package buid
 
 import (
-	"fmt"
+	"runtime"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestTime(t *testing.T) {
 	process := NewProcess(1)
-	ts := time.Now().UTC().Truncate(time.Microsecond)
+	ts := time.Now().UTC().Add(time.Nanosecond)
 	id := process.NewID(2, ts)
 	if extractedTs := id.Time(); !extractedTs.Equal(ts) {
 		t.Fatalf("expect %v got %v", ts, extractedTs)
@@ -17,7 +19,7 @@ func TestTime(t *testing.T) {
 
 func TestCounterReset(t *testing.T) {
 	process := NewProcess(1)
-	ts := time.Now().UTC().Truncate(time.Microsecond)
+	ts := time.Now().UTC()
 	var id ID
 	for i := 0; i < 5; i++ {
 		id = process.NewID(2, ts)
@@ -52,9 +54,9 @@ func TestCounterReset(t *testing.T) {
 func TestCounterOverflow(t *testing.T) {
 	var id ID
 	process := NewProcess(1)
-	ts := time.Now().UTC().Truncate(time.Microsecond)
+	ts := externalTime(process.t)
 
-	for i := 0; i <= 65535; i++ {
+	for i := 0; i <= maxCounter; i++ {
 		id = process.NewID(2, ts)
 		_, key := id.Split()
 		if int(key.Counter()) != i {
@@ -126,7 +128,7 @@ func TestKeyTime(t *testing.T) {
 }
 
 func TestKeyProcess(t *testing.T) {
-	ts := time.Now().UTC().Truncate(time.Microsecond)
+	ts := time.Now().UTC()
 	process := NewProcess(12)
 	id := process.NewID(42, ts)
 	_, key := id.Split()
@@ -136,7 +138,7 @@ func TestKeyProcess(t *testing.T) {
 }
 
 func TestKeyCounterInc(t *testing.T) {
-	ts := time.Now().UTC().Truncate(time.Microsecond)
+	ts := time.Now().UTC()
 	process := NewProcess(12)
 	var id ID
 	for i := 0; i < 23; i++ {
@@ -149,28 +151,51 @@ func TestKeyCounterInc(t *testing.T) {
 }
 
 func TestUniqueness(t *testing.T) {
-	m := make(map[ID]bool)
 	process := NewProcess(12)
-	for i := 0; i < 1000000; i++ {
-		id := process.NewID(1, time.Now())
-		if m[id] {
-			t.Fatal(i, "duplicates detected")
+	var wg sync.WaitGroup
+	n := runtime.NumCPU()
+	idss := make([][]ID, n)
+	for i := 0; i < n; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids := make([]ID, 100000)
+			for j := range ids {
+				ids[j] = process.NewID(1, time.Now())
+			}
+			idss[i] = ids
+		}()
+	}
+	wg.Wait()
+	m := make(map[ID]bool)
+	for _, ids := range idss {
+		for _, id := range ids {
+			if m[id] {
+				t.Fatal("duplication detected")
+			}
+			m[id] = true
 		}
-		m[id] = true
 	}
 }
 
 func BenchmarkMaxCounter(b *testing.B) {
 	process := NewProcess(12)
+	var a []int
+	var mu sync.Mutex
 	b.RunParallel(func(pb *testing.PB) {
-		c := uint16(0)
+		c := int(0)
 		for pb.Next() {
 			id := process.NewID(1, time.Now())
 			_, key := id.Split()
-			if key.Counter() > c {
-				c = key.Counter()
+			if int(key.Counter()) > c {
+				c = int(key.Counter())
 			}
 		}
-		fmt.Println(c)
+		mu.Lock()
+		a = append(a, c)
+		mu.Unlock()
 	})
+	sort.Sort(sort.Reverse(sort.IntSlice(a)))
+	b.Logf("max counter is %d", a[0])
 }

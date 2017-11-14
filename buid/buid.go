@@ -29,28 +29,27 @@ key:
     0             1               2               3
     7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0 7 6 5 4 3 2 1 0
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |  minutes  |  seconds  |            microseconds               |
+   |  minutes  |  seconds  |             nanoseconds
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-   |            process            |            counter            |
+        nanoseconds    |  counter  |            process            |
    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 Definitions:
 
-   | item         | type   | description                                                        |
-   |--------------|--------|--------------------------------------------------------------------|
-   | shard-index  | uint16 | the index of the shard for storing the data associated to the BUID |
-   | hours        | uint32 | hours from bespoke epoch (490,293 years, should be enough :-)      |
-   | minutes      | uint6  | 0-59 minutes within an hour                                        |
-   | seconds      | uint6  | 0-59 seconds within a minute                                       |
-   | microseconds | uint16 | 0-999999 microseconds within a second                              |
-   | process      | uint16 | a unique process on a specific node                                |
-   | counter      | uint16 | cyclic counter for within each microsecond                         |
+   | item        | type   | description                                                        |
+   |-------------|--------|--------------------------------------------------------------------|
+   | shard-index | uint16 | the index of the shard for storing the data associated to the BUID |
+   | hours       | uint32 | hours from bespoke epoch (490,293 years, should be enough :-)      |
+   | minutes     | uint6  | 0-59 minutes within an hour                                        |
+   | seconds     | uint6  | 0-59 seconds within a minute                                       |
+   | nanoseconds | uint30 | 0-999999999 nanoseconds within a second                            |
+   | counter     | uint6  | cyclic counter for within each nanosecond                          |
+   | process     | uint16 | a unique process on a specific node                                |
 
 */
 package buid
 
 import (
-	"math"
 	"sync"
 	"time"
 )
@@ -66,90 +65,82 @@ type (
 	// Process represents a unique process on a specific node
 	Process struct {
 		id      uint16
-		counter uint32
 		t       int64
+		counter uint8
 		mu      sync.Mutex
 	}
 )
 
 const (
-	secondInMicroseconds = 1000000
-	minuteInMicroseconds = 60 * 1000000
-	hourInMicroseconds   = 60 * 60 * 1000000
+	secondInNano = 1000000000
+	minuteInNano = 60 * secondInNano
+	hourInNano   = 60 * minuteInNano
+	maxCounter   = 0x3f
 )
 
-// Epoch is the bespoke epoch of BUID in Unix Epoch in microseconds
-var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC).UnixNano() / 1000
+// Epoch is the bespoke epoch of BUID in Unix Epoch in nanoseconds
+var Epoch = time.Date(2017, 10, 24, 0, 0, 0, 0, time.UTC).UnixNano()
 
-// internalTime returns internal epoch time in microseconds
+// internalTime returns internal epoch time in nanoseconds
 func internalTime(t time.Time) int64 {
-	return t.UnixNano()/1000 - Epoch
+	return t.UnixNano() - Epoch
 }
 func externalTime(t int64) time.Time {
-	return time.Unix(0, (Epoch+t)*1000).UTC()
+	return time.Unix(0, Epoch+t).UTC()
 }
 
 // NewProcess returns a new Process object for id
 func NewProcess(id uint16) *Process {
-	// the generator needs to wait a microsecond to avoid
-	// possible conflict caused by restarting within a microsecond
-	t := time.Now()
-	for {
-		now := time.Now()
-		if now.Sub(t) > time.Microsecond {
-			t = now
-			break
-		}
-	}
-
+	// the internal time is added by a nanosecond to avoid
+	// possible conflict caused by restarting within a nanosecond
+	// (though not likely)
 	return &Process{
 		id: id,
-		t:  internalTime(t),
+		t:  internalTime(time.Now().Add(time.Nanosecond)),
 	}
 }
 
 // NewID generates a new BUID from a shard index and a timestamp
 func (p *Process) NewID(shard uint16, timestamp time.Time) ID {
 	ts := internalTime(timestamp)
-	counter := uint16(0)
 	p.mu.Lock()
-	if ts > p.t {
-		p.t = ts
-		p.counter = 1
-	} else { // if ts == n.t || ts < n.t (same time or the clock is rewinded)
-		if p.counter > math.MaxUint16 { // is full
-			for {
-				now := internalTime(time.Now())
-				if now > p.t {
-					p.t = now
-					p.counter = 0
-					break
-				}
-			}
+	for {
+		if ts > p.t {
+			p.t = ts
+			p.counter = 0
+		} else if p.counter > maxCounter {
+			// ts is the same as p.t or ts is rewinded
+			// and counter is full
+			ts = internalTime(time.Now())
+			continue
 		}
-		counter = uint16(p.counter)
-		p.counter++
+		break
 	}
 	t := p.t
+	counter := uint16(p.counter)
+	p.counter++
 	p.mu.Unlock()
 
 	var (
-		hour    = uint32(t / hourInMicroseconds)
-		minute  = uint8((t % hourInMicroseconds) / minuteInMicroseconds)
-		second  = uint8((t % minuteInMicroseconds) / secondInMicroseconds)
-		micro   = uint32(t % secondInMicroseconds)
+		hour    = uint32(t / hourInNano)
+		minute  = uint8((t % hourInNano) / minuteInNano)
+		second  = uint8((t % minuteInNano) / secondInNano)
+		nano    = uint32(t % secondInNano)
 		process = p.id
 	)
 
 	return ID{
+		// shard
 		byte(shard >> 8), byte(shard),
 		0, 0, // reserved
 		byte(hour >> 24), byte(hour >> 16), byte(hour >> 8), byte(hour),
+
+		// key
 		((minute & 0x3f) << 2) | ((second & 0x30) >> 4),
-		((second & 0x0f) << 4) | byte(micro>>16),
-		byte(micro >> 8), byte(micro),
+		((second & 0x0f) << 4) | byte(nano>>26),
+		byte(nano >> 18), byte(nano >> 10),
+		byte(nano >> 2), byte(nano<<6) | byte(counter),
 		byte(process >> 8), byte(process),
-		byte(counter >> 8), byte(counter),
 	}
 }
 
@@ -162,13 +153,15 @@ func (id ID) Time() time.Time {
 			uint32(id[7])
 		minute = (id[8] & 0xfc) >> 2
 		second = ((id[8] & 0x03) << 4) | (id[9] >> 4)
-		micro  = (uint32(id[9]&0x0f) << 16) |
-			(uint32(id[10]) << 8) |
-			uint32(id[11])
-		t = int64(hour)*hourInMicroseconds +
-			int64(minute)*minuteInMicroseconds +
-			int64(second)*secondInMicroseconds +
-			int64(micro)
+		nano   = (uint32(id[9]&0x0f) << 26) |
+			(uint32(id[10]) << 18) |
+			(uint32(id[11]) << 10) |
+			(uint32(id[12]) << 2) |
+			(uint32(id[13]) >> 6)
+		t = int64(hour)*hourInNano +
+			int64(minute)*minuteInNano +
+			int64(second)*secondInNano +
+			int64(nano)
 	)
 	return externalTime(t)
 }
@@ -193,7 +186,7 @@ func (s Shard) Time() time.Time {
 		(uint32(s[5]) << 16) |
 		(uint32(s[6]) << 8) |
 		uint32(s[7])
-	t := int64(hour) * hourInMicroseconds
+	t := int64(hour) * hourInNano
 	return externalTime(t)
 }
 
@@ -201,20 +194,22 @@ func (s Shard) Time() time.Time {
 func (k Key) Time() time.Duration {
 	minute := (k[0] & 0xfc) >> 2
 	second := ((k[0] & 0x03) << 4) | (k[1] >> 4)
-	micro := (uint32(k[1]&0x0f) << 16) |
-		(uint32(k[2]) << 8) |
-		uint32(k[3])
-	return (time.Duration(minute)*minuteInMicroseconds +
-		time.Duration(second)*secondInMicroseconds +
-		time.Duration(micro)) * 1000
+	nano := (uint32(k[1]&0x0f) << 26) |
+		(uint32(k[2]) << 18) |
+		(uint32(k[3]) << 10) |
+		(uint32(k[4]) << 2) |
+		(uint32(k[5]) >> 6)
+	return (time.Duration(minute)*minuteInNano +
+		time.Duration(second)*secondInNano +
+		time.Duration(nano))
 }
 
 // Process returns the embedded process ID
 func (k Key) Process() uint16 {
-	return (uint16(k[4]) << 8) | uint16(k[5])
+	return (uint16(k[6]) << 8) | uint16(k[7])
 }
 
 // Counter returns the embedded counter part of the key
 func (k Key) Counter() uint16 {
-	return (uint16(k[6]) << 8) | uint16(k[7])
+	return uint16(k[5] & 0x3f)
 }
