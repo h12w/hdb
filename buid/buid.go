@@ -166,6 +166,21 @@ func (id ID) Time() time.Time {
 	return externalTime(t)
 }
 
+// Shard returns the embedded shard index
+func (id ID) Shard() uint16 {
+	return (uint16(id[0]) << 8) | uint16(id[1])
+}
+
+// Process returns the embedded process ID
+func (id ID) Process() uint16 {
+	return (uint16(id[14]) << 8) | uint16(id[15])
+}
+
+// Counter returns the embedded counter part of the key
+func (id ID) Counter() uint16 {
+	return uint16(id[13] & 0x3f)
+}
+
 // Split splits BUID to Shard and Key
 func (id ID) Split() (Shard, Key) {
 	var shard Shard
@@ -175,41 +190,35 @@ func (id ID) Split() (Shard, Key) {
 	return shard, key
 }
 
+func join(shard Shard, key Key) ID {
+	var id ID
+	copy(id[:8], shard[:])
+	copy(id[8:], key[:])
+	return id
+}
+
 // Index returns the embedded shard index
 func (s Shard) Index() uint16 {
-	return (uint16(s[0]) << 8) | uint16(s[1])
+	return join(s, Key{}).Shard()
 }
 
 // Time returns the embedded hours in time.Time
 func (s Shard) Time() time.Time {
-	hour := (uint32(s[4]) << 24) |
-		(uint32(s[5]) << 16) |
-		(uint32(s[6]) << 8) |
-		uint32(s[7])
-	t := int64(hour) * hourInNano
-	return externalTime(t)
+	return join(s, Key{}).Time()
 }
 
 // Time returns the embedded time in time.Duration
 func (k Key) Time() time.Duration {
-	minute := (k[0] & 0xfc) >> 2
-	second := ((k[0] & 0x03) << 4) | (k[1] >> 4)
-	nano := (uint32(k[1]&0x0f) << 26) |
-		(uint32(k[2]) << 18) |
-		(uint32(k[3]) << 10) |
-		(uint32(k[4]) << 2) |
-		(uint32(k[5]) >> 6)
-	return (time.Duration(minute)*minuteInNano +
-		time.Duration(second)*secondInNano +
-		time.Duration(nano))
+	t := join(Shard{}, k).Time()
+	return t.Sub(t.Truncate(time.Hour))
 }
 
 // Process returns the embedded process ID
 func (k Key) Process() uint16 {
-	return (uint16(k[6]) << 8) | uint16(k[7])
+	return join(Shard{}, k).Process()
 }
 
 // Counter returns the embedded counter part of the key
 func (k Key) Counter() uint16 {
-	return uint16(k[5] & 0x3f)
+	return join(Shard{}, k).Counter()
 }
