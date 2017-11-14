@@ -103,14 +103,18 @@ func NewProcess(id uint16) *Process {
 // NewID generates a new BUID from a shard index and a timestamp
 func (p *Process) NewID(shard uint16, timestamp time.Time) ID {
 	ts := internalTime(timestamp)
+
+	// The implementation tries its best to avoid duplication:
+	// 1. When p.t is in a fixed nanosecond, counter increases
+	// 2. When p.t proceeds, counter resets
+	// 3. When counter overflowed, wait until p.t can be updated to a later time
+	// 4. Internal p.t never rewinds
 	p.mu.Lock()
 	for {
 		if ts > p.t {
 			p.t = ts
 			p.counter = 0
 		} else if p.counter > maxCounter {
-			// ts is the same as p.t or ts is rewinded
-			// and counter is full
 			ts = internalTime(time.Now())
 			continue
 		}
